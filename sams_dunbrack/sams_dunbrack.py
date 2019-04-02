@@ -228,7 +228,7 @@ initial_state = 0
 torsion_force = dict() # a dict of torsion forces we retain
 bond_force = dict() # a dict of bond forces we retain
 for dihedral_index in range(ndihedrals):
-    energy_expression = f'(-rc_lambda)*(K/2)*cos(theta-dih{dihedral_index}_phi0); K = kT/(dih{dihedral_index}_dphi**2); kT = {kT_in_md_units}'
+    energy_expression = f'restraint_is_on*(K/2)*cos(theta-dih{dihedral_index}_phi0); K = kT/(dih{dihedral_index}_dphi**2); kT = {kT_in_md_units}'
     torsion_force[dihedral_index] = mm.CustomTorsionForce(energy_expression)
     torsion_force[dihedral_index].addTorsion(int(dih[dihedral_index][0]), int(dih[dihedral_index][1]), int(dih[dihedral_index][2]), int(dih[dihedral_index][3]))
     torsion_force[dihedral_index].addGlobalParameter(f'dih{dihedral_index}_phi0', 0.0) # center of torsion restraint (radians)
