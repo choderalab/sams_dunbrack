@@ -125,8 +125,8 @@ print("Done loading force field.")
 print("OpenMM version:", version.version)
 system = forcefield.createSystem(molecule.topology, nonbondedMethod=PME, rigidWater=True, nonbondedCutoff=1*unit.nanometer)
 
-# dunbrack_phi0[state_index,dihedral_index] is the reference dihedral value for state 'state_index' and dihedral 'dihedral_index'
-# dunbrack_dphi[state_index,dihedral_index] is the dihedral stddev for state 'state_index' and dihedral 'dihedral_index'
+# dunbrack_phi0[state_index,dihedral_index] is the reference dihedral value for state 'state_index' and dihedral 'dihedral_index' (in degrees)
+# dunbrack_dphi[state_index,dihedral_index] is the dihedral stddev for state 'state_index' and dihedral 'dihedral_index' (in degrees)
 
 # TODO: Encode the Dunbrack data (Modi and Dunbrack Jr., 2019)
 # state 0: BLAminus
@@ -223,19 +223,17 @@ dunbrack_phi0[7,9] = -111.22; dunbrack_dphi[7,9] = 97.45
 (dih, dis) = pf.main(pdbid,chain)
 
 # add dihedrals and/or distances to bias the sampling
-kT = (unit.MOLAR_GAS_CONSTANT_R * temperature).value_in_unit_system(unit.md_unit_system)
+kT_in_md_units = (unit.MOLAR_GAS_CONSTANT_R * temperature).value_in_unit_system(unit.md_unit_system)
 initial_state = 0
 torsion_force = dict() # a dict of torsion forces we retain
 bond_force = dict() # a dict of bond forces we retain
 for dihedral_index in range(ndihedrals):
-    K = kT/(dunbrack_dphi[initial_state,dihedral_index])**2
-    target = dunbrack_phi0[initial_state,dihedral_index]
-    energy_expression = '(-rc_lambda)*(K/2)*cos(theta-target)'
+    energy_expression = f'(-rc_lambda)*(K/2)*cos(theta-dih{dihedral_index}_phi0); K = kT/(dih{dihedral_index}_dphi**2); kT = {kT_in_md_units}'
     torsion_force[dihedral_index] = mm.CustomTorsionForce(energy_expression)
     torsion_force[dihedral_index].addTorsion(int(dih[dihedral_index][0]), int(dih[dihedral_index][1]), int(dih[dihedral_index][2]), int(dih[dihedral_index][3]))
-    torsion_force[dihedral_index].addGlobalParameter('K',K)
-    torsion_force[dihedral_index].addGlobalParameter('target',target)
-    torsion_force[dihedral_index].addGlobalParameter('rc_lambda', 0.0) # controls overall restraint strength
+    torsion_force[dihedral_index].addGlobalParameter(f'dih{dihedral_index}_phi0', 0.0) # center of torsion restraint (radians)
+    torsion_force[dihedral_index].addGlobalParameter(f'dih{dihedral_index}_dphi', 0.1) # width of torsion restraint (radians)
+    torsion_force[dihedral_index].addGlobalParameter('restraint_is_on', 0.0) # 1 if restraint is on, 0 if off
     system.addForce(torsion_force[dihedral_index])
 print("Done defining the CV force.")
 
@@ -245,13 +243,21 @@ class MyComposableState(states.GlobalParameterState):
     rc_lambda = states.GlobalParameterState.GlobalParameter('rc_lambda', standard_value=1.0)
 
 protocol = dict()
-protocol['rc_lambda'] = list()
+protocol['restraint_is_on'] = list()
+for dihedral_index in range(ndihedrals):
+    protocol[f'dih{dihedral_index}_phi0'] = list()
+    protocol[f'dih{dihedral_index}_dphi'] = list()
 # Add restraints to each of the 8 Dunbrack states
 for state_index in range(nstates):
-    protocol['rc_lambda'].append(1.0) # turn on restraint to each of the states
+    protocol['restraint_is_on'].append(1.0) # turn on restraint to each of the states
+    for dihedral_index in range(ndihedrals):
+        protocol[f'dih{dihedral_index}_phi0'].append(dunbrack_phi0[state_index,dihedral_index] * unit.degrees)
+        protocol[f'dih{dihedral_index}_dphi'].append(dunbrack_dphi[state_index,dihedral_index] * unit.degrees)
 # Add one more state where we turn off restraints
-protocol['rc_lambda'].append(0.0) # turn off restraints
-
+protocol['restraint_is_on'].append(0.0) # turn off restraints
+for dihedral_index in range(ndihedrals):
+    protocol[f'dih{dihedral_index}_phi0'].append(0.0 * unit.degrees) # irrelevant
+    protocol[f'dih{dihedral_index}_dphi'].append(10 * unit.degrees) # irrelevant, but must be > 0
 
 constants = {
     'temperature' : temperature,
