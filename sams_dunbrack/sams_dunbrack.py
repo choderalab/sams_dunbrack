@@ -5,7 +5,8 @@ import simtk.openmm as mm
 from simtk.openmm import unit, version, Context
 from simtk.openmm.app import Topology, PDBFile, Modeller, ForceField, PDBxFile, PME, Simulation, StateDataReporter
 from openmmtools import states, mcmc
-import protein_features as pf
+#import protein_features as pf
+from features import featurize
 import matplotlib.pyplot as plot
 import numpy as np
 import tempfile
@@ -20,8 +21,8 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 experiment = 'both' # setting of the experiment (e.g. different combinations of the CVs)
 pdbid = '5UG9' # PDB ID of the system
 chain = 'A'
-iteration = 100000
-work_dir = '/data/chodera/jiayeguo/projects/cv_selection/sams_simulation/5UG9_{}_{}'.format(experiment,iteration)
+iteration = 250000
+work_dir = '/data/chodera/jiayeguo/projects/cv_selection/sams_simulation/clean_simulations/5UG9_{}_{}'.format(experiment,iteration)
 temperature = 310.15 * unit.kelvin
 pressure = 1.0 * unit.atmospheres
 nstates = 8 # number of states we want to consider
@@ -31,90 +32,91 @@ ndistances = 5 # number of distances we want to restrain
 if not os.path.isfile(os.path.join(work_dir,'{}_minimized.pdb'.format(pdbid))):
     print("Need to minimize the protein structure.")
     ## clean up the input pdb file using pdbfixer and load using Modeller
-    import urllib
-    with urllib.request.urlopen('http://www.pdb.org/pdb/files/{}.pdb'.format(pdbid)) as response:
-        pdb_file = response.read()
+    if not os.path.isfile(os.path.join(work_dir,'{}_fixed.pdb'.format(pdbid))):
+        import urllib
+        with urllib.request.urlopen('http://www.pdb.org/pdb/files/{}.pdb'.format(pdbid)) as response:
+            pdb_file = response.read()
 
-    fixer = PDBFixer(pdbfile=pdb_file)
-    fixer.findMissingResidues()
+        fixer = PDBFixer(pdbfile=pdb_file)
+        fixer.findMissingResidues()
 
-    # modify missingResidues so the extra residues on the end are ignored
-    #fixer.missingResidues = {(0,47): fixer.missingResidues[(0,47)]}
-    fixer.missingResidues = {}
+        # modify missingResidues so the extra residues on the end are ignored
+        #fixer.missingResidues = {(0,47): fixer.missingResidues[(0,47)]}
+        fixer.missingResidues = {}
 
-    # remove ligand but keep crystal waters
-    fixer.removeHeterogens(True)
-    print("Done removing heterogens.")
+        # remove ligand but keep crystal waters
+        fixer.removeHeterogens(True)
+        print("Done removing heterogens.")
 
-    # find missing atoms/terminals
-    fixer.findMissingAtoms()
-    if fixer.missingAtoms or fixer.missingTerminals:
-        fixer.addMissingAtoms()
-        print("Done adding atoms/terminals.")
+        # find missing atoms/terminals
+        fixer.findMissingAtoms()
+        if fixer.missingAtoms or fixer.missingTerminals:
+            fixer.addMissingAtoms()
+            print("Done adding atoms/terminals.")
+        else:
+            print("No atom/terminal needs to be added.")
+
+        # add hydrogens
+        fixer.addMissingHydrogens(7.0)
+        print("Done adding hydrogens.")
+        # output fixed pdb
+        PDBFile.writeFile(fixer.topology, fixer.positions, open('{}_fixed.pdb'.format(pdbid), 'w'), keepIds=True)
+        print("Done outputing the fixed pdb file.")
     else:
-        print("No atom/terminal needs to be added.")
+        print("The fixed.pdb file already exists.")
+        # load pdb to Modeller
+        pdb = PDBFile('{}_fixed.pdb'.format(pdbid))
+        molecule = Modeller(pdb.topology,pdb.positions)
+        print("Done loading pdb to Modeller.")
+        # load force field
+        forcefield = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
+        print("Done loading force field.")
+        print("OpenMM version:", version.version)
+        # prepare system
+        molecule.addSolvent(forcefield, padding=12*unit.angstrom, model='tip3p', positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*unit.molar)
+        print("Done adding solvent.")
+        PDBxFile.writeFile(molecule.topology,molecule.positions,open("{}_fixed.pdbx".format(pdbid), 'w'), keepIds=True)
+        PDBFile.writeFile(molecule.topology,molecule.positions,open("{}_fixed_solvated.pdb".format(pdbid), 'w'), keepIds=True)
+        print("Done outputing pdbx and solvated pdb.")
+        system = forcefield.createSystem(molecule.topology, nonbondedMethod=PME, rigidWater=True, nonbondedCutoff=1*unit.nanometer)
 
-    # add hydrogens
-    fixer.addMissingHydrogens(7.0)
-    print("Done adding hydrogens.")
-    # output fixed pdb
-    PDBFile.writeFile(fixer.topology, fixer.positions, open('{}_fixed.pdb'.format(pdbid), 'w'), keepIds=True)
-    print("Done outputing the fixed pdb file.")
+        # specify the rest of the context for minimization
+        integrator = mm.VerletIntegrator(0.5*unit.femtoseconds)
+        print("Done specifying integrator.")
+        platform = mm.Platform.getPlatformByName('CUDA')
+        print("Done specifying platform.")
+        platform.setPropertyDefaultValue('Precision', 'mixed')
+        print("Done setting the precision to mixed.")
+        minimize = Simulation(molecule.topology, system, integrator, platform)
+        print("Done specifying simulation.")
+        minimize.context.setPositions(molecule.positions)
+        print("Done recording a context for positions.")
+        minimize.context.setVelocitiesToTemperature(310.15*unit.kelvin)
+        print("Done assigning velocities.")
 
-    # load pdb to Modeller
-    pdb = PDBFile('{}_fixed.pdb'.format(pdbid))
-    molecule = Modeller(pdb.topology,pdb.positions)
-    print("Done loading pdb to Modeller.")
-    # load force field
-    forcefield = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
-    print("Done loading force field.")
-    print("OpenMM version:", version.version)
-    # prepare system
-    molecule.addSolvent(forcefield, padding=12*unit.angstrom, model='tip3p', positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*unit.molar)
-    print("Done adding solvent.")
-    PDBxFile.writeFile(molecule.topology,molecule.positions,open("{}_fixed.pdbx".format(pdbid), 'w'))
-    PDBFile.writeFile(molecule.topology,molecule.positions,open("{}_fixed_solvated.pdb".format(pdbid), 'w'))
-    print("Done outputing pdbx and solvated pdb.")
-    system = forcefield.createSystem(molecule.topology, nonbondedMethod=PME, rigidWater=True, nonbondedCutoff=1*unit.nanometer)
-
-    # specify the rest of the context for minimization
-    integrator = mm.VerletIntegrator(0.5*unit.femtoseconds)
-    print("Done specifying integrator.")
-    platform = mm.Platform.getPlatformByName('CUDA')
-    print("Done specifying platform.")
-    platform.setPropertyDefaultValue('Precision', 'single')
-    print("Done setting the precision to single.")
-    minimize = Simulation(molecule.topology, system, integrator, platform)
-    print("Done specifying simulation.")
-    minimize.context.setPositions(molecule.positions)
-    print("Done recording a context for positions.")
-    minimize.context.setVelocitiesToTemperature(310.15*unit.kelvin)
-    print("Done assigning velocities.")
-
-    # start minimization
-    tolerance = 0.1*unit.kilojoules_per_mole/unit.angstroms
-    print("Done setting tolerance.")
-    minimize.minimizeEnergy(tolerance=tolerance,maxIterations=1000)
-    print("Done setting energy minimization.")
-    minimize.reporters.append(StateDataReporter('relax-hydrogens.log', 1000, step=True, temperature=True, potentialEnergy=True, totalEnergy=True, speed=True))
-    minimize.step(100000)
-    print("Done 100000 steps of minimization.")
-    print("Potential energy after minimization:")
-    print(minimize.context.getState(getEnergy=True).getPotentialEnergy())
-    positions = minimize.context.getState(getPositions=True).getPositions()
-    print("Done updating positions.")
-    #velocities = minimize.context.getState(getVelocities=True).getVelocities()
-    #print("Done updating velocities.")
-    minimize.saveCheckpoint('state.chk')
-    print("Done saving checkpoints.")
-    # update the current context with changes in system
-    # minimize.context.reinitialize(preserveState=True)
-    # output the minimized protein as a shortcut
-    PDBFile.writeFile(molecule.topology,positions,open("{}_minimized.pdb".format(pdbid), 'w'))
-    print("Done outputing minimized pdb.")
-    # clean the context
-    del minimize.context
-
+        # start minimization
+        tolerance = 0.1*unit.kilojoules_per_mole/unit.angstroms
+        print("Done setting tolerance.")
+        minimize.minimizeEnergy(tolerance=tolerance,maxIterations=1000)
+        print("Done setting energy minimization.")
+        minimize.reporters.append(StateDataReporter('relax-hydrogens.log', 1000, step=True, temperature=True, potentialEnergy=True, totalEnergy=True, speed=True))
+        minimize.step(100000)
+        print("Done 100000 steps of minimization.")
+        print("Potential energy after minimization:")
+        print(minimize.context.getState(getEnergy=True).getPotentialEnergy())
+        positions = minimize.context.getState(getPositions=True).getPositions()
+        print("Done updating positions.")
+        #velocities = minimize.context.getState(getVelocities=True).getVelocities()
+        #print("Done updating velocities.")
+        minimize.saveCheckpoint('state.chk')
+        print("Done saving checkpoints.")
+        # update the current context with changes in system
+        # minimize.context.reinitialize(preserveState=True)
+        # output the minimized protein as a shortcut
+        PDBFile.writeFile(molecule.topology,positions,open("{}_minimized.pdb".format(pdbid), 'w'), keepIds=True)
+        print("Done outputing minimized pdb.")
+        # clean the context
+        del minimize.context
 # directly load the minimized protein
 pdb = PDBFile('{}_minimized.pdb'.format(pdbid))
 molecule = Modeller(pdb.topology,pdb.positions)
@@ -266,7 +268,11 @@ dunbrack_phi0.update((x, y/180*np.pi) for x, y in dunbrack_phi0.items())
 dunbrack_dphi.update((x, y/180*np.pi) for x, y in dunbrack_dphi.items())
 
 # Specify the set of key atoms and calculate key dihedrals and distances
-(dih, dis) = pf.main(pdbid,chain)
+#(dih, dis) = pf.main(pdbid,chain)
+
+(key_res, dih, dis) = featurize(chain='A', coord='processed_pdb', feature='conf', pdb='5UG9')
+print(dih)
+print(dis)
 
 # add dihedrals and/or distances to bias the sampling
 kT_md_units = (unit.MOLAR_GAS_CONSTANT_R * temperature).value_in_unit_system(unit.md_unit_system)
@@ -375,14 +381,9 @@ move = mcmc.LangevinDynamicsMove(timestep=2.0*unit.femtoseconds, collision_rate=
 print("Done specifying integrator for simulation.")
 simulation = SAMSSampler(mcmc_moves=move, number_of_iterations=iteration, online_analysis_interval=None, gamma0=1.0, flatness_threshold=0.2)
 storage_path = os.path.join(work_dir,'traj.nc')
-reporter = MultiStateReporter(storage_path, checkpoint_interval=1)
+reporter = MultiStateReporter(storage_path, checkpoint_interval=500)
 # We should also add unsampled_states with the fully-interacting system
 simulation.create(thermodynamic_states=thermo_states, sampler_states=[sampler_state], storage=reporter)
 print("Done specifying simulation.")
 simulation.run()
 print("Done with {} iterations.".format(iteration))
-
-def main():
-    """For a given kinase (PDB code) run SAMS sampling across different thermodynamic states.
-    """
-    ;ljlk
