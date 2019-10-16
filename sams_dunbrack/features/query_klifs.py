@@ -53,12 +53,20 @@ def query_klifs_database(pdbid, chainid):
     chain_found = False
     import ast
     for structure in ast.literal_eval(clean):
-        # find the specific chain
-        if structure['chain'] == str(chainid):
-            kinase_id = int(structure['kinase_ID'])
-            name = str(structure['kinase'])
-            pocket_seq = str(structure['pocket'])
-            struct_id = int(structure['structure_ID'])
+        numbering = None
+        if isinstance(structure, int): ## if the stucture is not found in the klifs database
+            kinase_id = None
+            name = None
+            pocket_seq = None
+            struct_id = None
+            ligand = None
+        else:
+            # find the specific chain
+            if structure['chain'] == str(chainid):
+                kinase_id = int(structure['kinase_ID'])
+                name = str(structure['kinase'])
+                pocket_seq = str(structure['pocket'])
+                struct_id = int(structure['structure_ID'])
             # make sure the specified structure is not an apo structure
             ligand = None
             if structure['ligand'] != 0:
@@ -79,15 +87,17 @@ def query_klifs_database(pdbid, chainid):
                 (line[line.find('=') + 1:line.find(';')]))
     # check if there is gaps/missing residues among the pocket residues.
     # If so, enforce their indices as 0 and avoid using them to compute collective variables.
-    for i in range(len(numbering)):
-        if numbering[i] == -1:
-            #logging.info(
-            #    "Warning: There is a gap/missing residue at position: " +
-            #    str(i + 1) +
-            #    ". Its index will be enforced as 0 and it will not be used to compute collective variables."
-            #)
-            numbering[i] = 0
-
+    if numbering != None and len(numbering) > 0:
+        for i in range(len(numbering)):
+            if numbering[i] == -1:
+                #logging.info(
+                #    "Warning: There is a gap/missing residue at position: " +
+                #    str(i + 1) +
+                #    ". Its index will be enforced as 0 and it will not be used to compute collective variables."
+                #)
+                numbering[i] = 0
+    else:
+        numbering = None
     '''
     # print out kinase information
     logging.info("Kinase ID: " + str(kinase_id))

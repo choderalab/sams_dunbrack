@@ -1,0 +1,13 @@
+The analysis in protein.py only includes the Dunbrack key features: 
+Dih:
+0 -> X-DFG Phi
+1 -> X-DFG Psi
+2 -> DFG-Asp Phi
+3 -> DFG-Asp Psi
+4 -> DFG-Phe Phi
+5 -> DFG-Phe Psi
+6 -> DFG-Phe Chi1
+
+Dis:
+0 -> D1
+1 -> D2 (DFG conformation-related distances) 

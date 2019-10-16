@@ -43,6 +43,12 @@ setup(
     # Allows `setup.py test` to work correctly with pytest
     setup_requires=[] + pytest_runner,
 
+    # Add the kinomodel as an entry point
+    entry_points={
+        'console_scripts': [
+            'sams_dunbrack = sams_dunbrack.sams_dunbrack:main',
+        ],
+    }
     # Additional entries you may want simply uncomment the lines you want and fill in the data
     # author_email='me@place.org',      # Author email
     # url='http://www.my_package.com',  # Website
