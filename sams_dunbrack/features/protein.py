@@ -117,7 +117,7 @@ def compute_simple_protein_features(pdbid, chainid, coordfile, numbering):
     # get toppology info either from fixed pdb or original pdb file (based on input)
     # if analyzing a trajectory
     if coordfile == 'dcd':
-        traj = md.load(subprocess.check_output('ls *dcd', shell=True).strip(b'\n').decode("utf-8"),top = str(pdbid) + '_minimized.pdb')
+        traj = md.load(subprocess.check_output('ls *dcd', shell=True).strip(b'\n').decode("utf-8"),top = str(pdbid) + '_minequi.pdb')
         topology = md.load(str(pdbid)+'_fixed.pdb').topology
         chain_index = 0
     elif coordfile == 'raw_pdb':
@@ -159,7 +159,7 @@ def compute_simple_protein_features(pdbid, chainid, coordfile, numbering):
         chain_index = chain_lst.index(chainid)
     elif coordfile == 'processed_pdb':
         print("Reading in info from a processed pdb file.")
-        pdb = os.path.join(f'{pdbid}_chain{chainid}_minimized.pdb')
+        pdb = os.path.join(f'{pdbid}_chain{chainid}_minequi.pdb')
         with open(pdb, 'r') as file:
             # load traj before the temp pdb file was removed
             print("loading top from pdb")
