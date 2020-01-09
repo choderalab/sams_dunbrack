@@ -1,0 +1,15 @@
+set default PBradii mbondi2
+source oldff/leaprc.ff14SB
+loadamberparams frcmod.ionsjc_tip3p
+source leaprc.gaff
+rec = loadpdb ../01.chimera.mol.prep/2HYY_chainA_apo_minequi_noH.pdb
+loadamberparams lig.ante.frcmod
+loadamberprep lig.ante.prep
+lig = loadpdb lig.ante.pdb
+com = combine {rec lig}
+saveamberparm com 2HYY.com.gas.leap.prmtop 2HYY.com.gas.leap.inpcrd
+solvateBox com TIP3PBOX 10.0
+addIons com Na+ 5
+charge com
+saveamberparm com 2HYY.com.wat.leap.prmtop 2HYY.com.wat.leap.inpcrd
+quit
