@@ -2,34 +2,43 @@ import os
 from pdbfixer import PDBFixer
 import simtk.openmm as mm
 from simtk.openmm import unit, version, Context
-from simtk.openmm.app import Topology, PDBFile, Modeller, ForceField, PDBxFile, PME, Simulation, StateDataReporter
+from simtk.openmm.app import Topology, PDBFile, Modeller, ForceField, PDBxFile, PME, Simulation, StateDataReporter, HBonds
 from openmmtools import states, mcmc
 #import protein_features as pf
 from features import featurize
 import matplotlib.pyplot as plot
 import numpy as np
 import tempfile
+import yank
+import logging
+
+# output logs
+logger = logging.getLogger(__name__)
+logging.root.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+yank.utils.config_root_logger(verbose=True)
 
 # set up basic parameters
-experiment = 'newboth_s0' # setting of the experiment (e.g. different combinations of the CVs)
-pdbid = '1M17' # PDB ID of the system
+experiment = 'wt_apo_both_4fs' # setting of the experiment (e.g. different combinations of the CVs)
+pdbid = '2HYY' # PDB ID of the system
 chain = 'A'
-iteration = 50000
-work_dir = f'/data/chodera/jiayeguo/projects/cv_selection/sams_simulation/single_state/{pdbid}_{experiment}_{iteration}'
+iteration = 250000
+work_dir = f'/data/chodera/jiayeguo/projects/cv_selection/sams_simulation/new_trials/{pdbid}_{experiment}_{iteration}'
 temperature = 310.15 * unit.kelvin
 pressure = 1.0 * unit.atmospheres
 ndihedrals = 7 # number of dihedrals we want to restrain
 ndistances = 2 # number of distances we want to restrain
-targets = [0] # list of dunbrack clusters (sams states) to bias to
+targets = list(range(8)) # list of dunbrack clusters (sams states) to bias to
 coefficient = 1.0 # coefficient for force constant
 
 # directly load the minimized and equilibrated protein
-pdb = PDBFile(f'{pdbid}_chain{chain}_minequi.pdb')
+pdb = PDBFile(f'{pdbid}_chain{chain}_apo_minequi.pdb')
 # load force field
 forcefield = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
 print("Done loading force field.")
 print("OpenMM version:", version.version)
-system = forcefield.createSystem(pdb.topology, nonbondedMethod=PME, rigidWater=True, nonbondedCutoff=1*unit.nanometer)
+# use heavy hydrogens and constrain all hygrogen atom-involved bonds
+system = forcefield.createSystem(pdb.topology, nonbondedMethod=PME, rigidWater=True, nonbondedCutoff=1*unit.nanometer, hydrogenMass=4*unit.amu, constraints = HBonds)
 
 # Encode the Dunbrack data (Modi and Dunbrack Jr., 2019)
 import pandas as pd
@@ -148,6 +157,17 @@ for target in targets:
     for distance_index in range(ndistances):
         protocol[f'r0_dis{distance_index}'].append(dunbrack_mean[target, distance_index + 7])
         protocol[f'dr_dis{distance_index}'].append(dunbrack_std[target, distance_index + 7])
+
+# add an unbiased state
+protocol['switch'].append(0.0)
+protocol['coef'].append(coefficient)
+for dihedral_index in range(ndihedrals):
+    protocol[f'phi0_dih{dihedral_index}'].append(dunbrack_mean[0, dihedral_index])
+    protocol[f'dphi_dih{dihedral_index}'].append(dunbrack_std[0, dihedral_index])
+for distance_index in range(ndistances):
+    protocol[f'r0_dis{distance_index}'].append(dunbrack_mean[0, distance_index + 7])
+    protocol[f'dr_dis{distance_index}'].append(dunbrack_std[0, distance_index + 7])
+
 print(protocol.keys())
 constants = {
     'temperature' : temperature,
@@ -163,7 +183,14 @@ sampler_state = states.SamplerState(positions=pdb.positions, box_vectors=system.
 # at this step the CV and the system are separately passed to Metadynamics
 from yank.multistate import SAMSSampler, MultiStateReporter
 # TODO: You can use heavy hydrogens and 4 fs timesteps
-move = mcmc.LangevinDynamicsMove(timestep=2.0*unit.femtoseconds, collision_rate=1.0/unit.picosecond, n_steps=1000, reassign_velocities=False)
+
+# output logs
+logger = logging.getLogger(__name__)
+logging.root.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+yank.utils.config_root_logger(verbose=True)
+
+move = mcmc.LangevinDynamicsMove(timestep=4.0*unit.femtoseconds, collision_rate=1.0/unit.picosecond, n_steps=1000, reassign_velocities=False)
 print("Done specifying integrator for simulation.")
 simulation = SAMSSampler(mcmc_moves=move, number_of_iterations=iteration, online_analysis_interval=None, gamma0=1.0, flatness_threshold=0.2)
 storage_path = os.path.join(work_dir,'traj.nc')
